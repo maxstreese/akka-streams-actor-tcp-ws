@@ -16,7 +16,6 @@ import akka.actor.typed.ActorRef
 object Main extends App {
 
   implicit val system = ActorSystem(BuildInfo.name)
-  val echoActor = system.spawn(EchoActor(), "hi")
 
   implicit val timeout: akka.util.Timeout = 1.second
 
@@ -24,7 +23,12 @@ object Main extends App {
 
   connections.runForeach { connection =>
 
-    println(s"New connection from: ${connection.remoteAddress}")
+    val echoActor = system.spawn(EchoActor(0),
+      name = {
+        val addr = connection.remoteAddress
+        s"conn-${addr.getHostName()}-${addr.getPort()}"
+      }
+    )
 
     val echoActorFlow = ActorFlow.ask(echoActor)(
       makeMessage = (msg: String, replyTo: ActorRef[EchoActor.Reply]) => EchoActor.Request(msg, replyTo)
