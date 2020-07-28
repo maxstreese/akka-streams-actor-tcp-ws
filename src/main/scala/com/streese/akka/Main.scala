@@ -12,6 +12,7 @@ import com.streese.BuildInfo
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import akka.actor.typed.ActorRef
+import akka.stream.OverflowStrategy
 
 object Main extends App {
 
@@ -23,25 +24,35 @@ object Main extends App {
 
   connections.runForeach { connection =>
 
-    val echoActor = system.spawn(EchoActor(0),
+    val connectionHandler = system.spawn(ConnectionHandler(),
       name = {
         val addr = connection.remoteAddress
         s"conn-${addr.getHostName()}-${addr.getPort()}"
       }
     )
 
-    val echoActorFlow = ActorFlow.ask(echoActor)(
-      makeMessage = (msg: String, replyTo: ActorRef[EchoActor.Reply]) => EchoActor.Request(msg, replyTo)
-    )
+    val sink = ConnectionHandler.sinkActorRefWithBackpressure(connectionHandler)
 
-    val echo = Flow[ByteString]
+    val source = ActorSource
+      .actorRef[ConnectionHandler.Response](
+        completionMatcher = { case ConnectionHandler.Response.Complete => ()},
+        failureMatcher    = { case ConnectionHandler.Response.Fail(ex) => ex},
+        bufferSize        = 100,
+        overflowStrategy  = OverflowStrategy.dropHead
+      )
+      .collect { case ConnectionHandler.Response.Message(elem) => elem}
+      .mapMaterializedValue { sourceActorRef =>
+        connectionHandler ! ConnectionHandler.Request.DownstreamSource(sourceActorRef)
+      }
+
+    val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
       .map(_.utf8String.stripSuffix("\r"))
-      .via(echoActorFlow)
-      .map(_.msg)
+      .via(Flow.fromSinkAndSourceCoupled(sink, source))
+      .map(_ + "\n")
       .map(ByteString(_))
 
-    connection.handleWith(echo)
+    connection.handleWith(flow)
 
   }
 

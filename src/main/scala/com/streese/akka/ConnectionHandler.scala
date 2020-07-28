@@ -1,43 +1,75 @@
 package com.streese.akka
 
-import akka.actor.typed.Behavior
+import akka.actor.typed.{ActorRef, Behavior}
+import akka.stream.scaladsl.Sink
+import akka.stream.typed.scaladsl.ActorSink
+import akka.NotUsed
 import akka.actor.typed.scaladsl.Behaviors
-import com.streese.akka.ConnectionHandler.Start
-import com.streese.akka.ConnectionHandler.Stop
-import com.streese.akka.ConnectionHandler.Reset
-import com.streese.akka.ConnectionHandler.Inc
-import akka.actor.typed.ActorRef
 
 object ConnectionHandler {
 
   sealed trait Request
-  case object  Start                                  extends Request
-  case object  Stop                                   extends Request
-  case object  Reset                                  extends Request
-  case class   Inc(n: Int)                            extends Request
-
-  case class Response(n: Int)
-
-  case class State(cur: Int, inc: Int)
-
-  private val initState = State(0, 1)
-
-  def apply(): Behavior[Request] = Behaviors.setup { context =>
-    idle(initState)
+  object Request {
+    final case class  UpstreamInit(replyTo: ActorRef[Ack.type])                  extends Request
+    final case class  UpstreamMessage(replyTo: ActorRef[Ack.type], elem: String) extends Request
+    final case object UpstreamComplete                                           extends Request
+    final case class  UpstreamFailure(ex: Throwable)                             extends Request
+    final case class  DownstreamSource(replyTo: ActorRef[Response])              extends Request
   }
 
-  private def idle(state: State): Behavior[Request] = Behaviors.receiveMessage {
-    case Start  => streaming(state)
-    case Stop   => Behaviors.same
-    case Reset  => idle(initState)
-    case Inc(n) => idle(state.copy(inc = n))
+  final case object Ack
+
+  sealed trait Response
+  object Response {
+    final case class  Message(elem: String) extends Response
+    final case object Complete              extends Response
+    final case class  Fail(ex: Exception)   extends Response
   }
 
-  private def streaming(state: State): Behavior[Request] = Behaviors.receiveMessage {
-    case Start  => Behaviors.same
-    case Stop   => idle(state)
-    case Reset  => streaming(initState)
-    case Inc(n) => streaming(state.copy(inc = n))
+  final case class State()
+
+  def apply(): Behavior[Request] = initialBehavior
+
+  private def initialBehavior: Behavior[Request] = Behaviors.receiveMessage {
+    case msg: Request.UpstreamInit         => handleUpstreamInit(msg)
+    case msg: Request.UpstreamMessage      => handleUpstreamMessage(msg, None)
+    case Request.UpstreamComplete          => Behaviors.stopped
+    case Request.UpstreamFailure(ex)       => Behaviors.stopped
+    case Request.DownstreamSource(replyTo) => downstreamInitializedBehavior(replyTo)
   }
+
+  private def downstreamInitializedBehavior(
+    replyTo: ActorRef[Response]
+  ): Behavior[Request] = Behaviors.receiveMessage {
+    case msg: Request.UpstreamInit         => handleUpstreamInit(msg)
+    case msg: Request.UpstreamMessage      => handleUpstreamMessage(msg, Some(replyTo))
+    case Request.UpstreamComplete          => Behaviors.stopped
+    case Request.UpstreamFailure(ex)       => Behaviors.stopped
+    case Request.DownstreamSource(replyTo) => Behaviors.same
+  }
+
+  private def handleUpstreamInit(msg: Request.UpstreamInit): Behavior[Request] = {
+    msg.replyTo ! Ack
+    Behaviors.same
+  }
+
+  private def handleUpstreamMessage(
+    msg: Request.UpstreamMessage,
+    replyTo: Option[ActorRef[Response]]
+  ): Behavior[Request] = {
+    replyTo.foreach(r => r ! Response.Message(msg.elem + " !!!"))
+    msg.replyTo ! Ack
+    Behaviors.same
+  }
+
+  def sinkActorRefWithBackpressure(ref: ActorRef[Request]): Sink[String, NotUsed] =
+    ActorSink.actorRefWithBackpressure(
+      ref               = ref,
+      messageAdapter    = (replyTo: ActorRef[Ack.type], elem: String) => Request.UpstreamMessage(replyTo, elem),
+      onInitMessage     = (replyTo: ActorRef[Ack.type]) => Request.UpstreamInit(replyTo),
+      ackMessage        = Ack,
+      onCompleteMessage = Request.UpstreamComplete,
+      onFailureMessage  = ex => Request.UpstreamFailure(ex)
+    )
 
 }
