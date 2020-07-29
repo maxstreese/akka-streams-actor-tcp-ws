@@ -9,6 +9,7 @@ import akka.stream.typed.scaladsl._
 import akka.util.ByteString
 import com.streese.BuildInfo
 import com.streese.akka.actors._
+import com.streese.akka.actors.ConnectionHandler.{TickRequest, TickResponse}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -23,7 +24,7 @@ object Main extends App {
 
   connections.runForeach { connection =>
 
-    val connectionHandler = system.spawn(ConnectionHandlerBackpressured(),
+    val connectionHandler = system.spawn(ConnectionHandler.Actor(),
       name = {
         val addr = connection.remoteAddress
         s"conn-${addr.getHostName()}-${addr.getPort()}"
@@ -33,24 +34,20 @@ object Main extends App {
     val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
       .map(_.utf8String.stripSuffix("\r"))
-      .via(ConnectionHandlerBackpressured.sinkAndSourceCoupledFlow(connectionHandler))
-      .map(_ + "\n")
-      .map(ByteString(_))
+      .mapConcat(line => parseRequestLine(line).toSeq)
+      .via(ConnectionHandler.Actor.sinkAndSourceCoupledFlow(connectionHandler, 100, OverflowStrategy.fail))
+      .map(res => ByteString(s"${res.n}\n"))
 
     connection.handleWith(flow)
 
   }
 
-}
+  def parseRequestLine(line: String): Option[TickRequest] = line match {
+    case "start" => Some(TickRequest.Start)
+    case "stop"  => Some(TickRequest.Stop)
+    case "reset" => Some(TickRequest.Reset)
+    case "tick"  => Some(TickRequest.Tick)
+    case _       => None
+  }
 
-/*
-  - the client can send `start`, `stop`, `inc <n>` and `reset`
-  - upon receiving `start` the server will start streaming integers starting from 0 and incremented
-    by some inc value that by default is set to 1
-  - upon receiving `stop` the server will stop streaming the integers again
-  - receiving either `start` while the stream is alredy running or `stop` while it is stopped will
-    be ignored
-  - upon receiving `inc <n>` the server will set the inc value for the connection to <n>
-  - upon receiving `reset` the server will reset the integer value for the connection to 0 and the
-    inc value to 1
-*/
+}

@@ -144,6 +144,13 @@ object ConnectionHandlerBackpressured {
     }
   }
 
+  private def parseClientMessage(s: String): Option[ClientRequest] = s match {
+    case "start" => Some(ClientRequest.Start)
+    case "stop"  => Some(ClientRequest.Stop)
+    case "reset" => Some(ClientRequest.Reset)
+    case _       => None
+  }
+
   def sinkAndSourceCoupledFlow(ref: ActorRef[Request]): Flow[String, String, NotUsed] = {
     val sink = ActorSink.actorRefWithBackpressure(
       ref               = ref,
@@ -164,13 +171,6 @@ object ConnectionHandlerBackpressured {
       ref ! Request.SourceInit(sourceRef)
     }
     Flow.fromSinkAndSourceCoupled(sink, source)
-  }
-
-  private def parseClientMessage(s: String): Option[ClientRequest] = s match {
-    case "start" => Some(ClientRequest.Start)
-    case "stop"  => Some(ClientRequest.Stop)
-    case "reset" => Some(ClientRequest.Reset)
-    case _       => None
   }
 
 }
