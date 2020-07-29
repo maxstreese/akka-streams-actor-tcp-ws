@@ -9,7 +9,7 @@ import akka.stream.CompletionStrategy
 
 import scala.concurrent.duration._
 
-object ConnectionHandler {
+object ConnectionHandlerBackpressured {
 
   sealed trait Request
   final object Request {
@@ -18,8 +18,8 @@ object ConnectionHandler {
     final case object SinkCompleted                                              extends Request
     final case class  SinkFailed(ex: Throwable)                                  extends Request
     final case class  SourceInit(replyTo: ActorRef[Response])                    extends Request
-    private[ConnectionHandler] final case object SourceAck                       extends Request
-    private[ConnectionHandler] final case object Tick                            extends Request
+    private[ConnectionHandlerBackpressured] final case object SourceAck          extends Request
+    private[ConnectionHandlerBackpressured] final case object Tick               extends Request
   }
   final case object SinkAck
 
@@ -30,8 +30,8 @@ object ConnectionHandler {
     final case class  SourceFailed(ex: Throwable) extends Response
   }
 
-  private[ConnectionHandler] sealed trait ClientRequest
-  private[ConnectionHandler] final object ClientRequest {
+  private[ConnectionHandlerBackpressured] sealed trait ClientRequest
+  private[ConnectionHandlerBackpressured] final object ClientRequest {
     final case object Start         extends ClientRequest
     final case object Stop          extends ClientRequest
     final case object Reset         extends ClientRequest

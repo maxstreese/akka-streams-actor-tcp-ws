@@ -23,7 +23,7 @@ object Main extends App {
 
   connections.runForeach { connection =>
 
-    val connectionHandler = system.spawn(ConnectionHandler(),
+    val connectionHandler = system.spawn(ConnectionHandlerBackpressured(),
       name = {
         val addr = connection.remoteAddress
         s"conn-${addr.getHostName()}-${addr.getPort()}"
@@ -33,7 +33,7 @@ object Main extends App {
     val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
       .map(_.utf8String.stripSuffix("\r"))
-      .via(ConnectionHandler.sinkAndSourceCoupledFlow(connectionHandler))
+      .via(ConnectionHandlerBackpressured.sinkAndSourceCoupledFlow(connectionHandler))
       .map(_ + "\n")
       .map(ByteString(_))
 
