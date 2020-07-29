@@ -8,6 +8,7 @@ import akka.stream.scaladsl.Framing
 import akka.stream.typed.scaladsl._
 import akka.util.ByteString
 import com.streese.BuildInfo
+import com.streese.akka.actors._
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -17,8 +18,6 @@ import akka.stream.OverflowStrategy
 object Main extends App {
 
   implicit val system = ActorSystem(BuildInfo.name)
-
-  implicit val timeout: akka.util.Timeout = 1.second
 
   val connections: Source[IncomingConnection, Future[ServerBinding]] = Tcp().bind("127.0.0.1", 8888)
 
@@ -31,24 +30,10 @@ object Main extends App {
       }
     )
 
-    val sink = ConnectionHandler.sinkActorRefWithBackpressure(connectionHandler)
-
-    val source = ActorSource
-      .actorRef[ConnectionHandler.Response](
-        completionMatcher = { case ConnectionHandler.Response.Complete => ()},
-        failureMatcher    = { case ConnectionHandler.Response.Fail(ex) => ex},
-        bufferSize        = 100,
-        overflowStrategy  = OverflowStrategy.dropHead
-      )
-      .collect { case ConnectionHandler.Response.Message(elem) => elem}
-      .mapMaterializedValue { sourceActorRef =>
-        connectionHandler ! ConnectionHandler.Request.DownstreamSource(sourceActorRef)
-      }
-
     val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
       .map(_.utf8String.stripSuffix("\r"))
-      .via(Flow.fromSinkAndSourceCoupled(sink, source))
+      .via(ConnectionHandler.sinkAndSourceCoupledFlow(connectionHandler))
       .map(_ + "\n")
       .map(ByteString(_))
 
