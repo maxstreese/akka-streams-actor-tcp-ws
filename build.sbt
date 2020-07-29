@@ -4,11 +4,10 @@ organization := "com.streese"
 version := "0.0.0"
 scalaVersion := "2.13.3"
 
-lazy val akkaVersion = "2.6.8"
-
 libraryDependencies ++= Seq(
-  "com.typesafe.akka" %% "akka-actor-typed"  % akkaVersion,
-  "com.typesafe.akka" %% "akka-stream-typed" % akkaVersion
+  "com.typesafe.akka" %% "akka-actor-typed"  % "2.6.8",
+  "com.typesafe.akka" %% "akka-stream-typed" % "2.6.8",
+  "com.typesafe.akka" %% "akka-http"         % "10.1.12"
 )
 
 enablePlugins(BuildInfoPlugin)
