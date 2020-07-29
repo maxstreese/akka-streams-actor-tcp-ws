@@ -30,34 +30,44 @@ object ConnectionHandler {
       behaviorWhenStopped(sourceRef, defaultState)
     }
 
+    private val handleCompletions: PartialFunction[Request, Behavior[Request]] = {
+      case Request.SinkCompleted => Behaviors.stopped
+      case Request.SinkFailed(_) => Behaviors.stopped
+    }
+
     private def behaviorWhenStopped(
       sourceRef: ActorRef[Response],
       state: State
     ): Behavior[Request] = Behaviors.receiveMessagePartial {
-      case Request.SinkMessage(msg) => msg match {
-        case TickRequest.Start    => behaviorWhenStarted(sourceRef, state)
-        case TickRequest.Stop     => Behaviors.same
-        case TickRequest.Reset    => behaviorWhenStopped(sourceRef, defaultState)
-        case TickRequest.Tick     => Behaviors.same
-        case TickRequest.Inc(inc) => behaviorWhenStopped(sourceRef, state.copy(inc = inc))
+      handleCompletions orElse {
+        case Request.SinkMessage(msg) => msg match {
+          case TickRequest.Start    => behaviorWhenStarted(sourceRef, state)
+          case TickRequest.Stop     => Behaviors.same
+          case TickRequest.Reset    => behaviorWhenStopped(sourceRef, defaultState)
+          case TickRequest.Tick     => Behaviors.same
+          case TickRequest.Inc(inc) => behaviorWhenStopped(sourceRef, state.copy(inc = inc))
+        }
       }
-      case Request.SinkCompleted => Behaviors.stopped
-      case Request.SinkFailed(_) => Behaviors.stopped
     }
 
     private def behaviorWhenStarted(
       sourceRef: ActorRef[Response],
       state: State
     ): Behavior[Request] = Behaviors.receiveMessagePartial {
-      case Request.SinkMessage(msg) => msg match {
-        case TickRequest.Start    => Behaviors.same
-        case TickRequest.Stop     => behaviorWhenStopped(sourceRef, state)
-        case TickRequest.Reset    => behaviorWhenStarted(sourceRef, defaultState)
-        case TickRequest.Tick     => {sourceRef ! Response.SourceMessage(TickResponse(state.n)); behaviorWhenStarted(sourceRef, state.applyInc())}
-        case TickRequest.Inc(inc) => behaviorWhenStarted(sourceRef, state.copy(inc = inc))
+      handleCompletions orElse {
+        case Request.SinkMessage(msg) => msg match {
+          case TickRequest.Start    => Behaviors.same
+          case TickRequest.Stop     => behaviorWhenStopped(sourceRef, state)
+          case TickRequest.Reset    => behaviorWhenStarted(sourceRef, defaultState)
+          case TickRequest.Tick     => handleTickWhenStarted(sourceRef, state)
+          case TickRequest.Inc(inc) => behaviorWhenStarted(sourceRef, state.copy(inc = inc))
+        }
       }
-      case Request.SinkCompleted => Behaviors.stopped
-      case Request.SinkFailed(_) => Behaviors.stopped
+    }
+
+    private def handleTickWhenStarted(sourceRef: ActorRef[Response], state: State): Behavior[Request] = {
+      sourceRef ! Response.SourceMessage(TickResponse(state.n))
+      behaviorWhenStarted(sourceRef, state.applyInc())
     }
 
   }
