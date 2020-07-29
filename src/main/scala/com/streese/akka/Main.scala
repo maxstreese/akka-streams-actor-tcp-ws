@@ -5,31 +5,24 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.stream.scaladsl._
 import akka.stream.scaladsl.Tcp._
 import akka.stream.scaladsl.Framing
-import akka.stream.typed.scaladsl._
 import akka.util.ByteString
 import com.streese.BuildInfo
 import com.streese.akka.actors._
-import com.streese.akka.actors.ConnectionHandler.{TickRequest, TickResponse}
+import com.streese.akka.actors.ConnectionHandler.TickRequest
 
 import scala.concurrent.Future
-import scala.concurrent.duration._
-import akka.actor.typed.ActorRef
 import akka.stream.OverflowStrategy
 
 object Main extends App {
 
   implicit val system = ActorSystem(BuildInfo.name)
 
-  val connections: Source[IncomingConnection, Future[ServerBinding]] = Tcp().bind("127.0.0.1", 8888)
+  val tcpConnections: Source[IncomingConnection, Future[ServerBinding]] = Tcp().bind("127.0.0.1", 8888)
 
-  connections.runForeach { connection =>
+  tcpConnections.runForeach { connection =>
 
-    val connectionHandler = system.spawn(ConnectionHandler.Actor(),
-      name = {
-        val addr = connection.remoteAddress
-        s"conn-${addr.getHostName()}-${addr.getPort()}"
-      }
-    )
+    val connectionHandler =
+      spawnConnectionHandler(connection.remoteAddress.getHostName(), connection.remoteAddress.getPort())
 
     val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
@@ -41,6 +34,9 @@ object Main extends App {
     connection.handleWith(flow)
 
   }
+
+  def spawnConnectionHandler(hostName: String, port: Int) =
+    system.spawn(ConnectionHandler.Actor(), s"conn-$hostName-$port")
 
   def parseRequestLine(line: String): Option[TickRequest] = line match {
     case "start" => Some(TickRequest.Start)

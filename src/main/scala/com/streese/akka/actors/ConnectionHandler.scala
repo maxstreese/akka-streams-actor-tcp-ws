@@ -1,7 +1,7 @@
 package com.streese.akka.actors
 
 import akka.actor.typed.{ActorRef, Behavior}
-import akka.actor.typed.scaladsl.{Behaviors, TimerScheduler}
+import akka.actor.typed.scaladsl.Behaviors
 
 import scala.concurrent.duration._
 
