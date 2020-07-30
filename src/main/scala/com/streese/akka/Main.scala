@@ -12,17 +12,24 @@ import com.streese.akka.actors.ConnectionHandler.TickRequest
 
 import scala.concurrent.Future
 import akka.stream.OverflowStrategy
+import akka.http.scaladsl.Http
+import java.net.InetSocketAddress
+import akka.http.scaladsl.model.RemoteAddress
+
+import scala.jdk.OptionConverters._
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 
 object Main extends App {
 
   implicit val system = ActorSystem(BuildInfo.name)
 
-  val tcpConnections: Source[IncomingConnection, Future[ServerBinding]] = Tcp().bind("127.0.0.1", 8888)
+  val tcpConnectionsSource: Source[IncomingConnection, Future[ServerBinding]] = Tcp().bind("127.0.0.1", 8888)
 
-  tcpConnections.runForeach { connection =>
+  tcpConnectionsSource.runForeach { connection =>
 
     val connectionHandler =
-      spawnConnectionHandler(connection.remoteAddress.getHostName(), connection.remoteAddress.getPort())
+      spawnConnectionHandler("tcp", connection.remoteAddress)
 
     val flow = Flow[ByteString]
       .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
@@ -35,8 +42,36 @@ object Main extends App {
 
   }
 
-  def spawnConnectionHandler(hostName: String, port: Int) =
-    system.spawn(ConnectionHandler.Actor(), s"conn-$hostName-$port")
+  val wsRoute = {
+    import akka.http.scaladsl.server.Directives._
+    import akka.http.scaladsl.model.ws.{Message, BinaryMessage, TextMessage}
+    path("tick") {
+      extractClientIP { ip =>
+        get {
+          val connectionHandler = spawnConnectionHandler("ws", ip)
+          val flow = Flow[Message]
+            .mapAsync(1) {
+              case msg: BinaryMessage => msg.toStrict(1.second).map(_.data.utf8String)
+              case msg: TextMessage   => msg.toStrict(1.second).map(_.text)
+            }
+            .mapConcat(line => parseRequestLine(line).toSeq)
+            .via(ConnectionHandler.Actor.sinkAndSourceCoupledFlow(connectionHandler, 100, OverflowStrategy.fail))
+            .map(res => TextMessage.Strict(s"${res.n}"))
+          handleWebSocketMessages(flow)
+        }
+      }
+    }
+  }
+
+  val httpServerBinding = Http().bindAndHandle(wsRoute, "127.0.0.1", 8080)
+
+  def spawnConnectionHandler(protocol: String, remoteAddress: InetSocketAddress) =
+    system.spawn(ConnectionHandler.Actor(), s"conn-$protocol-${remoteAddress.getHostName()}-${remoteAddress.getPort()}")
+
+  def spawnConnectionHandler(protocol: String, remoteAddress: RemoteAddress) = {
+    val hostName = remoteAddress.getAddress().toScala.map(_.getHostAddress()).getOrElse(s"unknown-${System.nanoTime()}")
+    system.spawn(ConnectionHandler.Actor(), s"conn-$protocol-$hostName-${remoteAddress.getPort()}")
+  }
 
   def parseRequestLine(line: String): Option[TickRequest] = line match {
     case "start" => Some(TickRequest.Start)
