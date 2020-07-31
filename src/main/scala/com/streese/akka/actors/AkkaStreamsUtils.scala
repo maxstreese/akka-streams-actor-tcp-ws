@@ -2,7 +2,6 @@ package com.streese.akka.actors
 
 import akka.NotUsed
 import akka.actor.typed.ActorRef
-import akka.actor.typed.scaladsl.adapter._
 import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.Flow
 import akka.stream.typed.scaladsl.{ActorSink, ActorSource}
@@ -28,9 +27,9 @@ object AkkaStreamsUtils {
   }
 
   def sinkAndSourceCoupledFlow[I,O](ref: ActorRef[I],
-                                              adaptEvent: StreamEvent[O] => I,
-                                              bufferSize: Int,
-                                              overflowStrategy: OverflowStrategy): Flow[I, O, NotUsed] = {
+                                    adaptEvent: StreamEvent[O] => I,
+                                    bufferSize: Int,
+                                    overflowStrategy: OverflowStrategy): Flow[I, O, NotUsed] = {
     val sink = ActorSink
       .actorRef[I](
         ref,
@@ -48,8 +47,8 @@ object AkkaStreamsUtils {
       .mapMaterializedValue { sourceRef =>
         val control = new StreamControl[O] {
           override def push(msg: O): Unit = sourceRef ! msg
-          override def complete(): Unit = sourceRef.toClassic ! StreamControlCommand.Complete
-          override def fail(ex: Throwable): Unit = sourceRef.toClassic ! StreamControlCommand.Fail(ex)
+          override def complete(): Unit = sourceRef ! StreamControlCommand.Complete
+          override def fail(ex: Throwable): Unit = sourceRef ! StreamControlCommand.Fail(ex)
         }
         ref ! adaptEvent(StreamEvent.Ready(control))
       }
