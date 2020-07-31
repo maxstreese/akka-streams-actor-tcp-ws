@@ -38,6 +38,23 @@ object Main extends App {
       .via(ConnectionHandler.Actor.sinkAndSourceCoupledFlow(connectionHandler, 100, OverflowStrategy.fail))
       .map(res => ByteString(s"${res.n}\n"))
 
+    val connectionHandler2 =
+      spawnConnectionHandler2("tcp", connection.remoteAddress)
+
+    val flow2 = Flow[ByteString]
+      .via(Framing.delimiter(ByteString("\n"), maximumFrameLength = 256, allowTruncation = true))
+      .map(_.utf8String.stripSuffix("\r"))
+      .mapConcat(line => parseRequestLine2(line).toSeq)
+      .via(
+        AkkaStreamsUtils.sinkAndSourceCoupledFlow[ConnectionHandler2.TickRequest, ConnectionHandler2.TickResponse](
+          connectionHandler2,
+          ConnectionHandler2.TickRequest.HandleStreamEvent,
+          100,
+          OverflowStrategy.fail
+        )
+      )
+      .map(res => ByteString(s"${res.n}\n"))
+
     connection.handleWith(flow)
 
   }
@@ -68,6 +85,9 @@ object Main extends App {
   def spawnConnectionHandler(protocol: String, remoteAddress: InetSocketAddress) =
     system.spawn(ConnectionHandler.Actor(), s"conn-$protocol-${remoteAddress.getHostName()}-${remoteAddress.getPort()}")
 
+  def spawnConnectionHandler2(protocol: String, remoteAddress: InetSocketAddress) =
+    system.spawn(ConnectionHandler2(), s"conn-$protocol-${remoteAddress.getHostName()}-${remoteAddress.getPort()}")
+
   def spawnConnectionHandler(protocol: String, remoteAddress: RemoteAddress) = {
     val hostName = remoteAddress.getAddress().toScala.map(_.getHostAddress()).getOrElse(s"unknown-${System.nanoTime()}")
     system.spawn(ConnectionHandler.Actor(), s"conn-$protocol-$hostName-${remoteAddress.getPort()}")
@@ -79,6 +99,17 @@ object Main extends App {
     case "reset" => Some(TickRequest.Reset)
     case "tick"  => Some(TickRequest.Tick)
     case _       => None
+  }
+
+  def parseRequestLine2(line: String): Option[ConnectionHandler2.TickRequest] = {
+    import ConnectionHandler2.TickRequest
+    line match {
+      case "start" => Some(TickRequest.Start)
+      case "stop"  => Some(TickRequest.Stop)
+      case "reset" => Some(TickRequest.Reset)
+      case "tick"  => Some(TickRequest.Tick)
+      case _       => None
+    }
   }
 
 }
